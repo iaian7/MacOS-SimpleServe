@@ -272,5 +272,5 @@ class ApacheService {
 
     func start() { ensureIncludeDirective(); brew.startService("httpd") }
     func stop() { brew.stopService("httpd") }
-    func restart() { brew.restartService("httpd") }
+    func restart() { ensureIncludeDirective(); brew.restartService("httpd") }
 }

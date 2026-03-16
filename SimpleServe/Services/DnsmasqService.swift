@@ -8,7 +8,7 @@ struct DNSStatus {
     let diagnostics: [String]
 
     var isConfigured: Bool {
-        resolverContentValid && dnsmasqDirectivePresent
+        resolverContentValid && dnsmasqDirectivePresent && dnsmasqRunning
     }
 }
 
@@ -64,7 +64,7 @@ class DnsmasqService {
     }
 
     var resolverSetupCommand: String {
-        "sudo mkdir -p /etc/resolver && echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/test"
+        "sudo mkdir -p /etc/resolver && echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/test && grep -qF 'address=/.test/127.0.0.1' \"\(configPath)\" 2>/dev/null || echo 'address=/.test/127.0.0.1' >> \"\(configPath)\" && sudo \(brew.brewBin) services restart dnsmasq"
     }
 
     func configureDnsmasq() {
@@ -85,5 +85,5 @@ class DnsmasqService {
 
     func start() { configureDnsmasq(); brew.startService("dnsmasq") }
     func stop() { brew.stopService("dnsmasq") }
-    func restart() { brew.restartService("dnsmasq") }
+    func restart() { configureDnsmasq(); brew.restartService("dnsmasq") }
 }

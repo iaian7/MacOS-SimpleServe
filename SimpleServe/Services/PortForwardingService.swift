@@ -16,12 +16,12 @@ class PortForwardingService {
 
     /// Creates anchor file, inserts rules in pf translation section, and reloads pf.
     var setupCommand: String {
-        "sudo mkdir -p /etc/pf.anchors && printf 'rdr pass inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080\\nrdr pass inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443\\n' | sudo tee /etc/pf.anchors/simpleserve > /dev/null && sudo perl -0777 -i -pe 's|(\\n)?# BEGIN SimpleServe\\n.*?# END SimpleServe\\n?||sg; s|^\\s*rdr-anchor\\s+\"simpleserve\"\\s*\\n||gm; s|^\\s*load anchor \"simpleserve\" from \"/etc/pf\\.anchors/simpleserve\"\\s*\\n||gm; s|(load anchor \"com\\.apple\" from \"/etc/pf\\.anchors/com\\.apple\")|\\1\\nrdr-anchor \"simpleserve\"\\nload anchor \"simpleserve\" from \"/etc/pf.anchors/simpleserve\"|' /etc/pf.conf && sudo pfctl -ef /etc/pf.conf"
+        "sudo mkdir -p /etc/pf.anchors && printf 'rdr pass inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080\\nrdr pass inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443\\n' | sudo tee /etc/pf.anchors/simpleserve > /dev/null && sudo perl -0777 -i -pe 's|^rdr-anchor \"simpleserve\"\\n||gm; s|^load anchor \"simpleserve\" from \"[^\"]+\"\\n||gm; s|(rdr-anchor \"com\\.apple/\\*\")|$1\\nrdr-anchor \"simpleserve\"\\nload anchor \"simpleserve\" from \"/etc/pf.anchors/simpleserve\"|' /etc/pf.conf && sudo pfctl -ef /etc/pf.conf"
     }
 
     /// Removes all SimpleServe refs from pf.conf, reloads pf, then deletes anchor file.
     var revertCommand: String {
-        "sudo perl -0777 -i -pe 's|(\\n)?# BEGIN SimpleServe\\n.*?# END SimpleServe\\n?||sg; s|^\\s*rdr-anchor\\s+\"simpleserve\"\\s*\\n||gm; s|^\\s*load anchor \"simpleserve\" from \"/etc/pf\\.anchors/simpleserve\"\\s*\\n||gm' /etc/pf.conf && sudo pfctl -ef /etc/pf.conf && sudo rm -f /etc/pf.anchors/simpleserve"
+        "sudo perl -0777 -i -pe 's|^rdr-anchor \"simpleserve\"\\n||gm; s|^load anchor \"simpleserve\" from \"[^\"]+\"\\n||gm' /etc/pf.conf && sudo pfctl -ef /etc/pf.conf && sudo rm -f /etc/pf.anchors/simpleserve"
     }
 
     /// Legacy one-bit status used by older call sites.
@@ -72,8 +72,9 @@ class PortForwardingService {
         let result = brew.run("/sbin/pfctl -s nat -a simpleserve 2>&1", timeout: 5)
         if result.exitCode != 0 {
             let out = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            // On modern macOS builds, reading pf state commonly requires elevated privileges.
-            // If rules are configured, treat runtime state as active and avoid noisy false negatives.
+            // On modern macOS, reading pf NAT state requires elevated privileges.
+            // If the rules are confirmed configured in pf.conf and the anchor file,
+            // treat runtime as active rather than surfacing a misleading false negative.
             if out.localizedCaseInsensitiveContains("permission denied")
                 || out.localizedCaseInsensitiveContains("/dev/pf")
             {

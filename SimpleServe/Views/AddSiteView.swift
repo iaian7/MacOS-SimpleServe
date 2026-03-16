@@ -91,6 +91,12 @@ struct AddSiteView: View {
             get: { sslError != nil },
             set: { if !$0 { sslError = nil } }
         )) {
+            Button("Open Settings") {
+                sslError = nil
+                if let appDelegate = NSApp.delegate as? AppDelegate {
+                    appDelegate.openSettingsWindow()
+                }
+            }
             Button("OK", role: .cancel) { sslError = nil }
         } message: {
             if let err = sslError {

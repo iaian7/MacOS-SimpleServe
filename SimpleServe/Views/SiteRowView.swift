@@ -77,15 +77,7 @@ struct SiteRowView: View {
         let urlString = SiteURLResolver.shared.urlString(for: site)
         guard let url = URL(string: urlString) else { return }
 
-        // Ensure dnsmasq is running; if not, start it and wait briefly
-        if !DnsmasqService.shared.isDnsmasqRunning {
-            DnsmasqService.shared.start()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                openURL(url)
-            }
-        } else {
-            openURL(url)
-        }
+        openURL(url)
     }
 
     private func openURL(_ url: URL) {

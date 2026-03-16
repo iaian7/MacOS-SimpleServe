@@ -49,9 +49,7 @@ struct ComponentsTabView: View {
 }
 
 struct CommandsTabView: View {
-    @State private var mkcertCAInstalled: Bool?
-    @State private var mkcertInstalling = false
-    @State private var mkcertMessage: String?
+    @State private var mkcertCAStatus: CAStatus?
     @State private var dnsStatus: DNSStatus? = nil
     @State private var portForwardingStatus: PortForwardingStatus? = nil
 
@@ -69,6 +67,9 @@ struct CommandsTabView: View {
                     Label("Refresh", systemImage: "arrow.counterclockwise")
                 }
             }
+
+            ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
 
             // DNS Resolver status
             GroupBox("DNS Resolver") {
@@ -127,43 +128,64 @@ struct CommandsTabView: View {
             // mkcert CA status
             GroupBox("mkcert Root CA") {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        if mkcertCAInstalled == nil {
+                    if mkcertCAStatus == nil {
+                        HStack {
                             ProgressView()
                                 .scaleEffect(0.8)
                             Text("Checking…")
-                        } else {
-                            Image(systemName: mkcertCAInstalled == true ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                .foregroundStyle(mkcertCAInstalled == true ? .green : .red)
-                            Text(mkcertCAInstalled == true ? "CA installed" : "CA not installed")
                         }
+                    } else if let status = mkcertCAStatus {
+                        HStack(spacing: 10) {
+                            Label("Trusted", systemImage: status == .trusted ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundStyle(status == .trusted ? .green : .red)
+                                .font(.caption)
+                            if status == .notTrusted {
+                                Label("Not trusted", systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                    .font(.caption)
+                            }
+                        }
+                        Text(status == .trusted
+                             ? "mkcert root CA is installed and trusted."
+                             : status == .notTrusted
+                                 ? "mkcert root CA is in the keychain but not trusted."
+                                 : status == .notInKeychain
+                                     ? "mkcert root CA is not in the system keychain."
+                                     : "mkcert root CA is not installed.")
+                            .font(.caption)
                     }
-                    if mkcertCAInstalled == false {
-                        Text("Required. Run this command in Terminal (approve the Keychain prompt when asked):")
+
+                    if let status = mkcertCAStatus, !status.isUsable {
+                        Text(status == .notTrusted
+                             ? "Run the install command in Terminal to trigger the macOS trust approval dialog:"
+                             : "Run this command in Terminal to install the mkcert root CA. macOS will prompt you to approve the certificate trust:")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
                         HStack {
-                            Text("mkcert -install")
+                            Text(MkcertService.shared.installCommand)
                                 .font(.system(.caption, design: .monospaced))
                                 .textSelection(.enabled)
                                 .padding(6)
                                 .background(Color(nsColor: .textBackgroundColor))
                                 .cornerRadius(4)
-                            Button(action: copyMkcertCommand) {
+                            Button(action: { copyToClipboard(MkcertService.shared.installCommand) }) {
                                 Image(systemName: "doc.on.doc")
                             }
                             .help("Copy to clipboard")
                         }
-                        Text("Or click Install CA (Keychain prompt may require Terminal if it doesn't appear).")
+
+                        Text("For Firefox support, install NSS first (see Components tab), then re-run the install command.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Button("Install CA") {
-                            installMkcertCA()
-                        }
-                        .disabled(mkcertInstalling)
+
+                        Text("After running the command and approving the prompt, click Refresh to verify.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
-                    if mkcertCAInstalled == true {
-                        Text("If Safari still shows \"connection is not private\", try restarting Safari or use Chrome.")
+
+                    if mkcertCAStatus == .trusted {
+                        Text("For Firefox support, install NSS (see Components tab) and re-run the install command in Terminal. If Safari shows \"connection is not private\", try restarting Safari or use Chrome.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -254,6 +276,8 @@ struct CommandsTabView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        } // ScrollView
+        }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
@@ -261,24 +285,14 @@ struct CommandsTabView: View {
             refreshMkcertStatus()
             refreshPortForwardingStatus()
         }
-        .alert("mkcert CA", isPresented: Binding(
-            get: { mkcertMessage != nil },
-            set: { if !$0 { mkcertMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { mkcertMessage = nil }
-        } message: {
-            if let msg = mkcertMessage {
-                Text(msg)
-            }
-        }
     }
 
     private func refreshMkcertStatus() {
-        DispatchQueue.main.async { mkcertCAInstalled = nil }
+        DispatchQueue.main.async { mkcertCAStatus = nil }
         DispatchQueue.global(qos: .userInitiated).async {
-            let installed = MkcertService.shared.checkCAInstalled()
+            let status = MkcertService.shared.checkCAStatus()
             DispatchQueue.main.async {
-                mkcertCAInstalled = installed
+                mkcertCAStatus = status
             }
         }
     }
@@ -303,22 +317,9 @@ struct CommandsTabView: View {
         }
     }
 
-    private func copyMkcertCommand() {
+    private func copyToClipboard(_ text: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString("mkcert -install", forType: .string)
-    }
-
-    private func installMkcertCA() {
-        mkcertInstalling = true
-        mkcertMessage = nil
-        // Run on main thread so Keychain prompts appear in app context
-        if let err = MkcertService.shared.installCA() {
-            mkcertMessage = err
-        } else {
-            mkcertMessage = "mkcert root CA was installed successfully. If Safari still shows \"connection is not private\", try restarting Safari or use Chrome."
-            refreshMkcertStatus()
-        }
-        mkcertInstalling = false
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 

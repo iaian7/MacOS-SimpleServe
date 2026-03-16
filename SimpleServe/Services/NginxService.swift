@@ -85,5 +85,5 @@ class NginxService {
 
     func start() { ensureIncludeDirective(); brew.startService("nginx") }
     func stop() { brew.stopService("nginx") }
-    func restart() { brew.restartService("nginx") }
+    func restart() { ensureIncludeDirective(); brew.restartService("nginx") }
 }

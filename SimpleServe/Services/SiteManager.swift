@@ -196,7 +196,6 @@ class SiteManager: ObservableObject {
             } else {
                 NginxService.shared.stop()
             }
-            DnsmasqService.shared.restart()
             let neededPHPVersions = Set(snapshot.compactMap { $0.isActive ? $0.phpVersion : nil })
             for v in neededPHPVersions {
                 PHPService.shared.configureFPM(version: v)
@@ -219,7 +218,6 @@ class SiteManager: ObservableObject {
                 self.stopAllServices()
                 return
             }
-            DnsmasqService.shared.start()
             if snapshot.contains(where: { $0.isActive && $0.serverType == .apache }) {
                 ApacheService.shared.start()
             }
@@ -239,7 +237,6 @@ class SiteManager: ObservableObject {
     func stopAllServices() {
         ApacheService.shared.stop()
         NginxService.shared.stop()
-        DnsmasqService.shared.stop()
         for v in PHPService.shared.installedVersions() {
             PHPService.shared.stopFPM(version: v)
         }

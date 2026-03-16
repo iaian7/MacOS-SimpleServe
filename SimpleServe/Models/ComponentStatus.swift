@@ -5,6 +5,7 @@ enum ComponentName: String, CaseIterable, Codable {
     case php
     case dnsmasq
     case mkcert
+    case nss
     case nginx
 
     var displayName: String {
@@ -13,6 +14,7 @@ enum ComponentName: String, CaseIterable, Codable {
         case .php: return "PHP"
         case .dnsmasq: return "dnsmasq"
         case .mkcert: return "mkcert"
+        case .nss: return "NSS (certutil)"
         case .nginx: return "Nginx"
         }
     }
@@ -20,7 +22,7 @@ enum ComponentName: String, CaseIterable, Codable {
     var isRequired: Bool {
         switch self {
         case .httpd, .dnsmasq, .mkcert: return true
-        case .php, .nginx: return false
+        case .php, .nss, .nginx: return false
         }
     }
 
