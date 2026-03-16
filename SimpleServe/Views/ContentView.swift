@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var siteManager: SiteManager
+    @EnvironmentObject var appSettings: AppSettings
     @State private var showingAddSite = false
     @State private var editingSite: Site?
     @State private var resolverWarningDismissed = false
@@ -16,6 +17,23 @@ struct ContentView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
+                // Global server toggle
+                Button(action: {
+                    if appSettings.globalServerEnabled {
+                        appSettings.globalServerEnabled = false
+                        siteManager.stopAllServices()
+                    } else {
+                        appSettings.globalServerEnabled = true
+                        siteManager.startAllServices()
+                    }
+                }) {
+                    Image(systemName: "power")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(appSettings.globalServerEnabled ? Color.green : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(appSettings.globalServerEnabled ? "Stop all servers" : "Start all servers")
+
                 Text("SimpleServe")
                     .font(.headline)
                     .fontWeight(.semibold)
@@ -40,7 +58,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Restart all servers")
-                .disabled(displayedServerStatus == .unknown)
+                .disabled(displayedServerStatus == .unknown || !appSettings.globalServerEnabled)
 
                 Button(action: { showingAddSite = true }) {
                     Image(systemName: "plus")

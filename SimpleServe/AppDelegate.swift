@@ -24,7 +24,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupPopover()
         setupContextMenu()
 
-        siteManager.startAllServices()
+        if appSettings.globalServerEnabled {
+            siteManager.startAllServices()
+        } else {
+            siteManager.checkServerStatus()
+        }
 
         updateActivationPolicy()
 
@@ -184,6 +188,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             systemSymbolName: name,
             accessibilityDescription: "SimpleServe"
         )
+        // Dim the icon when the server is globally disabled
+        statusItem?.button?.alphaValue = appSettings.globalServerEnabled ? 1.0 : 0.4
     }
 
     /// Shows the loading/waiting icon. Used when quitting so the user sees feedback during stop.

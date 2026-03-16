@@ -49,6 +49,7 @@ class AppSettings: ObservableObject {
     @AppStorage("startAtLogin") var startAtLogin: Bool = false
     @AppStorage("hasCompletedSetup") var hasCompletedSetup: Bool = false
     @AppStorage("preferredBrowser") var preferredBrowserRaw: String = PreferredBrowser.default.rawValue
+    @AppStorage("globalServerEnabled") var globalServerEnabled: Bool = true
 
     var preferredBrowser: PreferredBrowser {
         get { PreferredBrowser(rawValue: preferredBrowserRaw) ?? .default }

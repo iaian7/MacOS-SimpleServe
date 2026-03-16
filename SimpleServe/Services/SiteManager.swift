@@ -179,6 +179,11 @@ class SiteManager: ObservableObject {
     // MARK: - Server Control
 
     func restartServers() {
+        // When the server is globally disabled, skip service restarts.
+        // Config files are still written/removed by the caller so they are
+        // ready the moment the global toggle is turned back on.
+        guard UserDefaults.standard.bool(forKey: "globalServerEnabled") else { return }
+
         let snapshot = sites
         DispatchQueue.main.async { self.serverStatus = .unknown }
         DispatchQueue.global(qos: .userInitiated).async {
