@@ -104,6 +104,7 @@ class ApacheService {
     private func directoryBlock(_ path: String) -> String {
         """
             <Directory "\(path)">
+                DirectoryIndex index.php index.html index.htm
                 Options Indexes FollowSymLinks
                 AllowOverride All
                 Require all granted
