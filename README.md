@@ -1,6 +1,6 @@
 # MacOS-SimpleServe
 
-Simple menu bar server management for local hosting of test websites in macOS. Host sites at `.test` domains with HTTPS support, powered by Homebrew services (Apache or Nginx, dnsmasq, mkcert).
+Simple menu bar server management for local hosting of test websites in macOS. Host sites at `.test` domains with HTTPS support, powered by Homebrew services (Apache or Nginx, dnsmasq, mkcert, and optional PHP support).
 
 ## Prerequisites
 
@@ -26,17 +26,23 @@ Follow these steps before using SimpleServe:
 | 5 | Install mkcert CA | `mkcert -install` (approve Keychain when prompted) |
 | 6 | Optional: Port forwarding | Run setup from Settings > Commands for port-free URLs (80/443) |
 
-The app shows component status and copy-paste commands in **Settings > Setup** and **Settings > Commands**.
+The app shows component status and copy-paste commands in **Settings > Components** and **Settings > Commands**.
 
 ## Usage
 
 - **Launch** — Icon appears in the menu bar.
 - **Click icon** — Popover shows your site list.
-- **Add site** — Click +, choose project folder, enter hostname (e.g. `mysite` → `mysite.test`).
+- **Add site** — Click +, choose project folder, enter hostname (e.g. `mysite` → `mysite.test`), select web server (Apache or Nginx), optionally choose a PHP version.
 - **Toggle** — Switch sites on or off.
 - **Actions** — Open in browser, open in Finder, edit (gear), delete (right-click).
 - **Restart** — Button to restart all servers.
 - **Settings** — Component Status, Commands (DNS, mkcert CA, port forwarding), Preferences (browser, menu icon, start at login).
+
+### Preferences
+
+- **Browser** — Choose default browser, Safari, Chrome, or Firefox
+- **Menu icon** — Choose between Server, Network, or Radio icons
+- **Start at login** — Enable to launch automatically on login
 
 ## Notes & Conflict Warnings
 
