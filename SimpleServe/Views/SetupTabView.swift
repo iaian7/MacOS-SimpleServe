@@ -41,7 +41,9 @@ struct ComponentsTabView: View {
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            if siteManager.components.isEmpty { siteManager.refreshComponents() }
+            if siteManager.components.isEmpty {
+                DispatchQueue.main.async { siteManager.refreshComponents() }
+            }
         }
     }
 }
@@ -122,7 +124,7 @@ struct CommandsTabView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // mkcert CA status (for HTTPS sites)
+            // mkcert CA status
             GroupBox("mkcert Root CA") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -137,7 +139,7 @@ struct CommandsTabView: View {
                         }
                     }
                     if mkcertCAInstalled == false {
-                        Text("Required for HTTPS sites. Run this command in Terminal (approve the Keychain prompt when asked):")
+                        Text("Required. Run this command in Terminal (approve the Keychain prompt when asked):")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         HStack {

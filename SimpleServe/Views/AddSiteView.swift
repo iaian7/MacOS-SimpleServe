@@ -20,9 +20,7 @@ struct AddSiteView: View {
     @State private var hostname = ""
     @State private var serverType: ServerType = .apache
     @State private var phpVersion = "none"
-    @State private var useSSL = true
     @State private var sslError: String?
-    @State private var mkcertCAInstalled: Bool = true
 
     private var isEditing: Bool {
         if case .edit = mode { return true }
@@ -74,15 +72,6 @@ struct AddSiteView: View {
                         Text(v).tag(v)
                     }
                 }
-
-                Toggle("Enable HTTPS (SSL)", isOn: $useSSL)
-                    .disabled(!mkcertCAInstalled)
-                    .help(mkcertCAInstalled ? "Use HTTPS for this site" : "Run mkcert -install in Terminal (Settings > Commands)")
-                if !mkcertCAInstalled {
-                    Text("Run mkcert -install in Terminal (Settings > Commands).")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
             }
             .padding(.horizontal)
 
@@ -114,14 +103,6 @@ struct AddSiteView: View {
                 hostname = site.hostname
                 serverType = site.serverType
                 phpVersion = site.phpVersion ?? "none"
-                useSSL = site.useSSL
-            }
-            DispatchQueue.global(qos: .userInitiated).async {
-                let installed = MkcertService.shared.checkCAInstalled()
-                DispatchQueue.main.async {
-                    mkcertCAInstalled = installed
-                    if !installed && useSSL { useSSL = false }
-                }
             }
         }
     }
@@ -156,12 +137,11 @@ struct AddSiteView: View {
             existing.hostname = hostname
             existing.serverType = serverType
             existing.phpVersion = php
-            existing.useSSL = useSSL
             ok = siteManager.updateSite(existing)
         } else {
             let site = Site(folderPath: folderPath, hostname: hostname,
                             serverType: serverType, phpVersion: php,
-                            isActive: true, useSSL: useSSL)
+                            isActive: true)
             ok = siteManager.addSite(site)
         }
         if ok {

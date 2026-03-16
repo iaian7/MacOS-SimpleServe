@@ -5,6 +5,8 @@ struct ContentView: View {
     @State private var showingAddSite = false
     @State private var editingSite: Site?
     @State private var resolverWarningDismissed = false
+    /// Mirrors serverStatus; updated via NotificationCenter so the popover refreshes even when @EnvironmentObject observation fails
+    @State private var displayedServerStatus: ServerRunStatus = .unknown
 
     private var resolverMissing: Bool {
         !DnsmasqService.shared.isResolverConfigured && !resolverWarningDismissed
@@ -27,7 +29,7 @@ struct ContentView: View {
                 Button(action: {
                     siteManager.restartServers()
                 }) {
-                    if siteManager.serverStatus == .unknown {
+                    if displayedServerStatus == .unknown {
                         ProgressView()
                             .controlSize(.small)
                             .frame(width: 14, height: 14)
@@ -38,7 +40,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Restart all servers")
-                .disabled(siteManager.serverStatus == .unknown)
+                .disabled(displayedServerStatus == .unknown)
 
                 Button(action: { showingAddSite = true }) {
                     Image(systemName: "plus")
@@ -63,14 +65,30 @@ struct ContentView: View {
                         .font(.system(size: 12))
                         .padding(.top, 1)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Error")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                        Text(error)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
-                            .lineLimit(14)
+                        HStack {
+                            Text("Error")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            Button(action: {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(error, forType: .string)
+                            }) {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Copy diagnostics")
+                        }
+                        ScrollView {
+                            Text(error)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 120)
                     }
                     Spacer(minLength: 0)
                 }
@@ -110,6 +128,10 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 340, maxWidth: 340, minHeight: 200)
+        .onAppear { displayedServerStatus = siteManager.serverStatus }
+        .onReceive(NotificationCenter.default.publisher(for: .simpleServeServerStatusDidChange)) { _ in
+            displayedServerStatus = siteManager.serverStatus
+        }
         .sheet(isPresented: $showingAddSite) {
             AddSiteView(mode: .add)
                 .environmentObject(siteManager)
@@ -124,7 +146,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var serverStatusBadge: some View {
-        switch siteManager.serverStatus {
+        switch displayedServerStatus {
         case .running:
             Label("Running", systemImage: "circle.fill")
                 .font(.caption2)
@@ -169,10 +191,7 @@ struct ContentView: View {
                     .padding(4)
                     .background(Color(nsColor: .textBackgroundColor).opacity(0.6))
                     .cornerRadius(4)
-                Text("Until then, use http:// prefix in Safari or type the full URL with port.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text("For SSL-disabled sites, always use an explicit HTTP URL.")
+                Text("Until then, use the full URL with port (e.g. https://mysite.test:8443).")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

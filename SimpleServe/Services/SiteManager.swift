@@ -95,11 +95,9 @@ class SiteManager: ObservableObject {
     /// Adds a site. Returns false if SSL setup failed (error stored in lastError).
     @discardableResult
     func addSite(_ site: Site) -> Bool {
-        if site.useSSL {
-            if let err = MkcertService.shared.ensureSSLReady(for: site.hostname) {
-                DispatchQueue.main.async { self.lastError = err }
-                return false
-            }
+        if let err = MkcertService.shared.ensureSSLReady(for: site.hostname) {
+            DispatchQueue.main.async { self.lastError = err }
+            return false
         }
         sites.append(site)
         saveSites()
@@ -117,11 +115,9 @@ class SiteManager: ObservableObject {
             removeSiteConfig(old)
             MkcertService.shared.removeCert(for: old.hostname)
         }
-        if site.useSSL {
-            if let err = MkcertService.shared.ensureSSLReady(for: site.hostname) {
-                DispatchQueue.main.async { self.lastError = err }
-                return false
-            }
+        if let err = MkcertService.shared.ensureSSLReady(for: site.hostname) {
+            DispatchQueue.main.async { self.lastError = err }
+            return false
         }
         sites[idx] = site
         saveSites()
@@ -142,7 +138,7 @@ class SiteManager: ObservableObject {
     func toggleSite(_ site: Site) {
         guard let idx = sites.firstIndex(where: { $0.id == site.id }) else { return }
         let willActivate = !sites[idx].isActive
-        if willActivate, sites[idx].useSSL {
+        if willActivate {
             if let err = MkcertService.shared.ensureSSLReady(for: sites[idx].hostname) {
                 DispatchQueue.main.async { self.lastError = err }
                 return
@@ -152,23 +148,24 @@ class SiteManager: ObservableObject {
         saveSites()
         if sites[idx].isActive { configureSite(sites[idx]) } else { removeSiteConfig(sites[idx]) }
         restartServers()
-        DispatchQueue.main.async { self.lastError = nil }
+        DispatchQueue.main.async {
+            DispatchQueue.main.async { self.lastError = nil }
+        }
     }
 
     // MARK: - Configuration
 
     private func configureSite(_ site: Site) {
         let phpSocket = site.phpVersion.map { PHPService.shared.socketPath(for: $0) }
-        // Only generate a cert when SSL is actually requested.
-        let cert = site.useSSL ? MkcertService.shared.generateCert(for: site.hostname) : nil
+        let cert = MkcertService.shared.generateCert(for: site.hostname)!
 
         switch site.serverType {
         case .apache:
             ApacheService.shared.writeSiteConfig(site, phpSocket: phpSocket,
-                                                  certPath: cert?.certPath, keyPath: cert?.keyPath)
+                                                  certPath: cert.certPath, keyPath: cert.keyPath)
         case .nginx:
             NginxService.shared.writeSiteConfig(site, phpSocket: phpSocket,
-                                                 certPath: cert?.certPath, keyPath: cert?.keyPath)
+                                                 certPath: cert.certPath, keyPath: cert.keyPath)
         }
     }
 
@@ -210,7 +207,7 @@ class SiteManager: ObservableObject {
                     PHPService.shared.stopFPM(version: v)
                 }
             }
-            self.checkServerStatus()
+            self.checkServerStatus(snapshot: snapshot)
         }
     }
 
@@ -234,7 +231,7 @@ class SiteManager: ObservableObject {
                 PHPService.shared.configureFPM(version: v)
                 PHPService.shared.startFPM(version: v)
             }
-            self.checkServerStatus()
+            self.checkServerStatus(snapshot: snapshot)
         }
     }
 
@@ -246,39 +243,45 @@ class SiteManager: ObservableObject {
         for v in PHPService.shared.installedVersions() {
             PHPService.shared.stopFPM(version: v)
         }
-        DispatchQueue.main.async { self.checkServerStatus() }
+        checkServerStatus(snapshot: [])
     }
 
     // MARK: - Status Check
 
-    /// Shells out to `brew services list` and updates serverStatus on the main thread.
-    func checkServerStatus() {
-        let brew = HomebrewService.shared
-        let result = brew.run("\(brew.brewBin) services list 2>&1")
-        let output = result.output
+    /// Shells out to `brew services list` off-main and publishes state on the main thread.
+    func checkServerStatus(snapshot: [Site]? = nil) {
+        let snapshot = snapshot ?? sites
+        DispatchQueue.global(qos: .userInitiated).async {
+            let brew = HomebrewService.shared
+            let result = brew.run("\(brew.brewBin) services list 2>&1")
+            let output = result.output
 
-        // Parse the httpd line from `brew services list` output.
-        // Format: "httpd   started  admin  ..."
-        //    or:  "httpd   error  1  root  ..."
-        //    or:  "httpd   none"
-        let lines = output.components(separatedBy: "\n")
-        let httpdLine = lines.first(where: { $0.hasPrefix("httpd") }) ?? ""
+            // Parse the httpd line from `brew services list` output.
+            // Format: "httpd   started  admin  ..."
+            //    or:  "httpd   error  1  root  ..."
+            //    or:  "httpd   none"
+            let lines = output.components(separatedBy: "\n")
+            let httpdLine = lines.first(where: { $0.hasPrefix("httpd") }) ?? ""
 
-        let newStatus: ServerRunStatus
-        var errorMsg: String? = nil
+            let apacheExpected = snapshot.contains { $0.isActive && $0.serverType == .apache }
+            let apacheActuallyRunning = apacheExpected && ApacheService.shared.isHomebrewApacheRunning()
 
-        if httpdLine.contains("started") {
-            newStatus = .running
-        } else if httpdLine.contains("error") {
-            errorMsg = ApacheService.shared.diagnoseStartupFailure()
-            newStatus = .error(errorMsg ?? "")
-        } else {
-            newStatus = .stopped
-        }
+            let newStatus: ServerRunStatus
+            var errorMsg: String? = nil
 
-        DispatchQueue.main.async {
-            self.serverStatus = newStatus
-            self.lastError = errorMsg
+            if httpdLine.contains("started") || apacheActuallyRunning {
+                newStatus = .running
+            } else if httpdLine.contains("error") {
+                errorMsg = ApacheService.shared.diagnoseStartupFailure()
+                newStatus = .error(errorMsg ?? "")
+            } else {
+                newStatus = .stopped
+            }
+
+            DispatchQueue.main.async {
+                self.serverStatus = newStatus
+                self.lastError = errorMsg
+            }
         }
     }
 }

@@ -64,7 +64,7 @@ Port forwarding modifies `/etc/pf.conf`. It can affect networking. If problems o
 
 ### DNS / .test domains
 
-Until the resolver is set up (step 4), use full URLs with the port (e.g. `http://mysite.test:8080`) or type the URL explicitly in Safari. Chrome and Firefox usually work better with `.test` domains and local HTTPS than Safari.
+Until the resolver is set up (step 4), use full URLs with the port (e.g. `https://mysite.test:8443`).
 
 ### mkcert
 

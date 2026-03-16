@@ -4,6 +4,7 @@ import ServiceManagement
 struct PreferencesTabView: View {
     @EnvironmentObject var appSettings: AppSettings
     @State private var loginItemError: String? = nil
+    @State private var isUpdatingLoginItem = false
 
     var body: some View {
         Form {
@@ -16,9 +17,6 @@ struct PreferencesTabView: View {
                         Text(browser.displayName).tag(browser.rawValue)
                     }
                 }
-                Text("Chrome and Firefox often work better with .test domains and local HTTPS.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section("Appearance") {
@@ -46,6 +44,9 @@ struct PreferencesTabView: View {
     }
 
     private func updateLoginItem(enabled: Bool) {
+        guard !isUpdatingLoginItem else { return }
+        isUpdatingLoginItem = true
+        defer { isUpdatingLoginItem = false }
         do {
             if enabled {
                 try SMAppService.mainApp.register()

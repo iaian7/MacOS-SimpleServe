@@ -2,6 +2,10 @@ import SwiftUI
 import AppKit
 import Combine
 
+extension Notification.Name {
+    static let simpleServeServerStatusDidChange = Notification.Name("simpleServeServerStatusDidChange")
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
@@ -40,7 +44,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Show spinner when services are starting (launch) or restarting; restore icon when done.
         siteManager.$serverStatus
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateIcon() }
+            .sink { [weak self] _ in
+                self?.updateIcon()
+                NotificationCenter.default.post(name: .simpleServeServerStatusDidChange, object: nil)
+            }
             .store(in: &cancellables)
 
         // First launch only: open settings so the user can verify components.

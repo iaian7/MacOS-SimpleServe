@@ -12,20 +12,16 @@ struct SiteRowView: View {
     }
 
     private var openInBrowserHelp: String {
-        if !DnsmasqService.shared.isResolverConfigured {
-            return "Configure .test DNS first"
-        }
-        if !site.useSSL {
-            return "Open HTTP site (if Safari upgrades to HTTPS, use explicit http URL)"
-        }
-        return "Open in browser"
+        DnsmasqService.shared.isResolverConfigured ? "Open in browser" : "Configure .test DNS first"
     }
 
     var body: some View {
         HStack(spacing: 10) {
             Toggle("", isOn: Binding(
                 get: { site.isActive },
-                set: { _ in siteManager.toggleSite(site) }
+                set: { _ in
+                    DispatchQueue.main.async { siteManager.toggleSite(site) }
+                }
             ))
             .toggleStyle(.switch)
             .controlSize(.mini)

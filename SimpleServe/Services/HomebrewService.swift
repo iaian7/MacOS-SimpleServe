@@ -21,9 +21,17 @@ class HomebrewService {
 
     @discardableResult
     func run(_ command: String, timeout: TimeInterval = 30) -> (output: String, exitCode: Int32) {
+        let result = runWithStderr(command, timeout: timeout)
+        return (result.output, result.exitCode)
+    }
+
+    /// Runs a command and captures both stdout and stderr. Use for diagnostic commands where stderr matters.
+    func runWithStderr(_ command: String, timeout: TimeInterval = 30) -> (output: String, stderr: String, exitCode: Int32) {
         let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
+        let stdoutAccumulator = NSMutableData()
+        let stderrAccumulator = NSMutableData()
 
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-c", command]
@@ -37,7 +45,16 @@ class HomebrewService {
         do {
             try process.run()
         } catch {
-            return ("Error: \(error.localizedDescription)", 1)
+            return ("Error: \(error.localizedDescription)", "", 1)
+        }
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if !chunk.isEmpty { stdoutAccumulator.append(chunk) }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if !chunk.isEmpty { stderrAccumulator.append(chunk) }
         }
 
         // Watchdog: kill the process if it exceeds the timeout
@@ -47,9 +64,18 @@ class HomebrewService {
         }
         process.waitUntilExit()
 
-        let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        return (output.trimmingCharacters(in: .whitespacesAndNewlines), process.terminationStatus)
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        // Drain any final bytes that arrived after the last readability callback.
+        let stdoutRemainder = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrRemainder = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        stdoutAccumulator.append(stdoutRemainder)
+        stderrAccumulator.append(stderrRemainder)
+
+        let output = String(data: stdoutAccumulator as Data, encoding: .utf8) ?? ""
+        let stderr = String(data: stderrAccumulator as Data, encoding: .utf8) ?? ""
+        return (output.trimmingCharacters(in: .whitespacesAndNewlines), stderr.trimmingCharacters(in: .whitespacesAndNewlines), process.terminationStatus)
     }
 
     func checkComponent(_ component: ComponentName) -> ComponentInfo {
@@ -77,8 +103,16 @@ class HomebrewService {
     }
 
     /// Start service on-demand (does not register for launch at login/boot).
+    /// Performs a clean stop + explicit launchctl bootout before run to avoid "Bootstrap failed: 5"
+    /// when a stale service is left in launchd.
     func startService(_ name: String) {
-        run("\(brewBin) services stop \(name) 2>/dev/null")  // cleanup any prior registration
+        run("\(brewBin) services stop \(name) 2>/dev/null")
+        run("\(brewBin) services cleanup 2>/dev/null")
+        // Explicit bootout clears stale launchd entries that cause "Bootstrap failed: 5"
+        if name == "httpd" {
+            run("launchctl bootout gui/$(id -u) \"$HOME/Library/LaunchAgents/homebrew.mxcl.httpd.plist\" 2>/dev/null || true")
+            run("launchctl bootout gui/$(id -u) \"\(brewPrefix)/opt/httpd/homebrew.mxcl.httpd.plist\" 2>/dev/null || true")
+        }
         run("\(brewBin) services run \(name)")
     }
     func stopService(_ name: String) { run("\(brewBin) services stop \(name)") }

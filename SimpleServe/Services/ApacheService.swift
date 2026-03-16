@@ -144,53 +144,128 @@ class ApacheService {
 
     // MARK: - Startup Failure Diagnostics
 
+    private static let systemApacheFix = """
+        To temporarily stop macOS Apache, run in Terminal:
+        sudo /usr/sbin/apachectl stop
+
+        To disable it permanently:
+        sudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist
+        """
+
+    private static let launchctlBootstrapFix = """
+        Unload stale user launchd entries, then click Restart in SimpleServe. In Terminal:
+        launchctl bootout gui/$(id -u) "$HOME/Library/LaunchAgents/homebrew.mxcl.httpd.plist" 2>/dev/null
+        brew services stop httpd
+        brew services cleanup
+        """
+
+    private static let rootOwnedServiceFix = """
+        httpd appears to be registered as root. Re-register it under your user account:
+        sudo brew services stop httpd
+        sudo launchctl bootout system/homebrew.mxcl.httpd 2>/dev/null
+        brew services cleanup
+        brew services start httpd
+        """
+
     /// Diagnoses why Homebrew httpd failed to start and returns a user-facing message plus fix commands.
     /// Call when brew services list reports httpd as "error".
     func diagnoseStartupFailure() -> String {
-        // Check if macOS built-in Apache is running
+        let brewBin = brew.brewBin
+        let logPath = "\(brew.brewPrefix)/var/log/httpd/error_log"
+
+        // Gather all diagnostics (do NOT run brew services run here - it can worsen the failure)
+        let brewServices = brew.run("\(brewBin) services list 2>&1")
         let systemApache = brew.run("ps aux 2>/dev/null | grep /usr/sbin/httpd | grep -v grep")
         let systemApacheRunning = !systemApache.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        // Check if ports 8080/8443 are in use
+        let portBindings = brew.run("lsof -i :8080 -i :8443 2>/dev/null")
         let port8080 = brew.run("lsof -i :8080 -t 2>/dev/null")
         let port8443 = brew.run("lsof -i :8443 -t 2>/dev/null")
         let port8080InUse = !port8080.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let port8443InUse = !port8443.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        // Get Homebrew httpd error log
-        let logPath = "\(brew.brewPrefix)/var/log/httpd/error_log"
-        let logTail = brew.run("tail -20 \"\(logPath)\" 2>/dev/null")
+        let launchctlList = brew.run("launchctl list 2>/dev/null | grep -E 'httpd|homebrew' || true")
+        let logTail = brew.run("tail -30 \"\(logPath)\" 2>/dev/null")
         let logOutput = logTail.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let httpdLine = brewServices.output.components(separatedBy: "\n").first { $0.hasPrefix("httpd") } ?? brewServices.output
+        let serviceLooksRootOwned = httpdLine.contains(" root ")
+        let launchctlHttpdLine = launchctlList.output
+            .components(separatedBy: "\n")
+            .first { $0.contains("homebrew.mxcl.httpd") } ?? ""
+        let isLaunchctlErrorState = launchctlHttpdLine.contains("\t1\t") || launchctlHttpdLine.contains(" 1 ")
+        let logShowsResumed = logOutput.contains("resuming normal operations") || logOutput.contains("AH00163")
+
+        // Build structured findings
+        var findings: [String] = []
+        findings.append("System Apache: \(systemApacheRunning ? "running" : "not running")")
+        findings.append("Port 8080: \(port8080InUse ? "in use" : "free")")
+        findings.append("Port 8443: \(port8443InUse ? "in use" : "free")")
+
+        func formatMessage(summary: String, fix: String) -> String {
+            var msg = summary
+            msg += "\n\nFindings:\n" + findings.map { "- \($0)" }.joined(separator: "\n")
+            if !portBindings.output.isEmpty {
+                msg += "\n\nPort bindings (lsof -i :8080 -i :8443):\n\(portBindings.output)"
+            }
+            msg += "\n\nBrew services (httpd):\n\(httpdLine)"
+            if !launchctlList.output.isEmpty {
+                msg += "\n\nLaunchctl (httpd/homebrew):\n\(launchctlList.output)"
+            }
+            if !logOutput.isEmpty {
+                msg += "\n\nRecent httpd error log:\n\(logOutput)"
+            }
+            msg += "\n\nFix: \(fix)"
+            return msg
+        }
 
         if systemApacheRunning {
-            var msg = "macOS built-in Apache is running and may conflict with Homebrew httpd."
-            msg += "\n\nTo temporarily stop it, run in Terminal:"
-            msg += "\n\nsudo /usr/sbin/apachectl stop"
-            msg += "\n\nTo disable it permanently:"
-            msg += "\n\nsudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist"
-            msg += "\n\nThen click Restart in SimpleServe."
-            return msg
+            let fix = Self.systemApacheFix + "\n\nThen click Restart in SimpleServe."
+            return formatMessage(summary: "macOS built-in Apache is running and may conflict with Homebrew httpd.", fix: fix)
         }
 
         if port8080InUse || port8443InUse {
-            var msg = "Ports 8080 or 8443 appear to be in use. To see what is using them:"
-            msg += "\n\nlsof -i :8080 -i :8443"
-            msg += "\n\nStop the process using those ports, then click Restart."
-            if !logOutput.isEmpty {
-                msg += "\n\nRecent httpd log:\n\(logOutput)"
-            }
-            return msg
+            let fix = "Stop the process using ports 8080/8443 (see lsof above), then click Restart."
+            return formatMessage(summary: "Ports 8080 or 8443 appear to be in use.", fix: fix)
+        }
+
+        if serviceLooksRootOwned {
+            return formatMessage(
+                summary: "Homebrew reports httpd under root. This usually means it was started with sudo and now conflicts with user launchd.",
+                fix: Self.rootOwnedServiceFix + "\nThen click Restart in SimpleServe."
+            )
+        }
+
+        if isLaunchctlErrorState && !systemApacheRunning {
+            let fix = Self.launchctlBootstrapFix + "\nThen click Restart in SimpleServe."
+            let summary = "launchctl bootstrap failed (exit 5). This is usually a stale service in launchd, not system Apache."
+            return formatMessage(summary: summary, fix: fix)
+        }
+
+        if logShowsResumed {
+            // Apache started but brew reports error; system Apache already handled above
+            let summary = "Apache appears to have started (log shows 'resuming normal operations'), but brew services reports an error."
+            let fix = Self.launchctlBootstrapFix + "\nThen click Restart in SimpleServe."
+            return formatMessage(summary: summary, fix: fix)
         }
 
         if !logOutput.isEmpty {
-            // Log shows "resuming normal operations" = Apache started; brew services may be stale or system Apache conflicts
-            if logOutput.contains("resuming normal operations") || logOutput.contains("AH00163") {
-                return "Apache appears to have started (log shows 'resuming normal operations'), but brew services reports an error. Stopping system Apache often fixes this.\n\nTo temporarily stop macOS Apache, run in Terminal:\n\nsudo /usr/sbin/apachectl stop\n\nTo disable it permanently:\n\nsudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist\n\nThen click Restart in SimpleServe."
-            }
-            return "httpd failed to start.\n\nRecent error log:\n\(logOutput)\n\nStop system Apache first, then click Restart. In Terminal:\n\nsudo /usr/sbin/apachectl stop\n\nOr to disable it permanently:\n\nsudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist"
+            let fix = Self.launchctlBootstrapFix + "\nThen click Restart."
+            return formatMessage(summary: "httpd failed to start.", fix: fix)
         }
 
-        return "httpd service is in error state.\n\nStop system Apache first, then click Restart. In Terminal:\n\nsudo /usr/sbin/apachectl stop\n\nOr to disable it permanently:\n\nsudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist"
+        let fix = Self.launchctlBootstrapFix + "\nThen click Restart."
+        return formatMessage(summary: "httpd service is in error state.", fix: fix)
+    }
+
+    /// Returns true when Homebrew httpd is actually running, even if `brew services list` is stale.
+    func isHomebrewApacheRunning() -> Bool {
+        let httpdBin = "\(brew.brewPrefix)/opt/httpd/bin/httpd"
+        let process = brew.run("ps aux 2>/dev/null | grep \"\(httpdBin)\" | grep -v grep")
+        if !process.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        let listener = brew.run("lsof -nP -iTCP:8080 -sTCP:LISTEN 2>/dev/null")
+        return !listener.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - Service Control
