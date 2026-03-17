@@ -72,16 +72,19 @@ class PortForwardingService {
         let result = brew.run("/sbin/pfctl -s nat -a simpleserve 2>&1", timeout: 5)
         if result.exitCode != 0 {
             let out = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            // On modern macOS, reading pf NAT state requires elevated privileges.
-            // If the rules are confirmed configured in pf.conf and the anchor file,
-            // treat runtime as active rather than surfacing a misleading false negative.
-            if out.localizedCaseInsensitiveContains("permission denied")
-                || out.localizedCaseInsensitiveContains("/dev/pf")
-            {
-                return (true, nil)
+            // On modern macOS, reading pf NAT state often requires elevated privileges.
+            // Fall back to an actual TCP connectivity probe on 80/443 and only report
+            // active if both ports are reachable.
+            if out.localizedCaseInsensitiveContains("permission denied") || out.localizedCaseInsensitiveContains("/dev/pf") {
+                let httpReachable = isLocalPortReachable(80)
+                let httpsReachable = isLocalPortReachable(443)
+                if httpReachable && httpsReachable {
+                    return (true, nil)
+                }
+                return (false, "Runtime forwarding could not be verified without sudo, and ports 80/443 are not reachable.")
             }
             let message = out.isEmpty ? "pfctl returned non-zero exit code (\(result.exitCode))."
-                                  : "pfctl check failed: \(out)"
+                                   : "pfctl check failed: \(out)"
             return (false, message)
         }
         let lines = result.output.components(separatedBy: .newlines).map {
@@ -95,5 +98,10 @@ class PortForwardingService {
     private func isForwardRule(_ line: String, fromPort: Int, toPort: Int) -> Bool {
         guard line.contains("rdr"), line.contains("->") else { return false }
         return line.contains("port \(fromPort)") && line.contains("port \(toPort)")
+    }
+
+    private func isLocalPortReachable(_ port: Int) -> Bool {
+        let result = brew.run("/usr/bin/nc -z -G 1 127.0.0.1 \(port) >/dev/null 2>&1", timeout: 2)
+        return result.exitCode == 0
     }
 }
