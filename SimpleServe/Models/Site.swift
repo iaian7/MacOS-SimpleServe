@@ -31,7 +31,8 @@ class SiteURLResolver {
     static let shared = SiteURLResolver()
 
     func urlString(for site: Site, allowPortlessWhenForwarding: Bool = true) -> String {
-        if allowPortlessWhenForwarding && PortForwardingService.shared.status.isRuntimeActive {
+        let forwarding = PortForwardingService.shared.status
+        if allowPortlessWhenForwarding && forwarding.isConfigured {
             return "https://\(site.domain)"
         }
         return "https://\(site.domain):8443"

@@ -71,24 +71,36 @@ class PortForwardingService {
     private func runtimeState() -> (isActive: Bool, error: String?) {
         let result = brew.run("/sbin/pfctl -s nat -a simpleserve 2>&1", timeout: 5)
         if result.exitCode != 0 {
-            let out = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let out = result.output.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             // On modern macOS, reading pf NAT state often requires elevated privileges.
-            // Fall back to an actual TCP connectivity probe on 80/443 and only report
-            // active if both ports are reachable.
+            // Fall back to a stricter network probe that avoids false positives.
             if out.localizedCaseInsensitiveContains("permission denied") || out.localizedCaseInsensitiveContains("/dev/pf") {
+                let backendHTTPReachable = isLocalPortReachable(8080)
+                let backendHTTPSReachable = isLocalPortReachable(8443)
                 let httpReachable = isLocalPortReachable(80)
                 let httpsReachable = isLocalPortReachable(443)
-                if httpReachable && httpsReachable {
+                let direct80 = hasDirectListener(80)
+                let direct443 = hasDirectListener(443)
+
+                if backendHTTPReachable && backendHTTPSReachable && httpReachable && httpsReachable && !direct80 && !direct443 {
                     return (true, nil)
                 }
-                return (false, "Runtime forwarding could not be verified without sudo, and ports 80/443 are not reachable.")
+
+                if direct80 || direct443 {
+                    return (false, "Port forwarding conflict: direct listener detected on 80/443.")
+                }
+
+                // In this path, we cannot read pf runtime state without sudo.
+                // If the web server is stopped or no site is active, 80/443 and 8080/8443
+                // may be closed even when forwarding is configured correctly.
+                return (false, nil)
             }
             let message = out.isEmpty ? "pfctl returned non-zero exit code (\(result.exitCode))."
                                    : "pfctl check failed: \(out)"
             return (false, message)
         }
-        let lines = result.output.components(separatedBy: .newlines).map {
-            $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = result.output.components(separatedBy: CharacterSet.newlines).map {
+            $0.lowercased().trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         }
         let has80to8080 = lines.contains(where: { isForwardRule($0, fromPort: 80, toPort: 8080) })
         let has443to8443 = lines.contains(where: { isForwardRule($0, fromPort: 443, toPort: 8443) })
@@ -103,5 +115,10 @@ class PortForwardingService {
     private func isLocalPortReachable(_ port: Int) -> Bool {
         let result = brew.run("/usr/bin/nc -z -G 1 127.0.0.1 \(port) >/dev/null 2>&1", timeout: 2)
         return result.exitCode == 0
+    }
+
+    private func hasDirectListener(_ port: Int) -> Bool {
+        let result = brew.run("/usr/sbin/lsof -nP -iTCP:\(port) -sTCP:LISTEN 2>/dev/null", timeout: 3)
+        return !result.output.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty
     }
 }

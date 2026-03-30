@@ -93,9 +93,7 @@ struct AddSiteView: View {
         )) {
             Button("Open Settings") {
                 sslError = nil
-                if let appDelegate = NSApp.delegate as? AppDelegate {
-                    appDelegate.openSettingsWindow()
-                }
+                NotificationCenter.default.post(name: .simpleServeOpenSettingsCommands, object: nil)
             }
             Button("OK", role: .cancel) { sslError = nil }
         } message: {

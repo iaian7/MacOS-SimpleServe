@@ -136,29 +136,20 @@ struct CommandsTabView: View {
                         }
                     } else if let status = mkcertCAStatus {
                         HStack(spacing: 10) {
-                            Label("Trusted", systemImage: status == .trusted ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            Label("Available", systemImage: status == .trusted ? "checkmark.circle.fill" : "xmark.circle.fill")
                                 .foregroundStyle(status == .trusted ? .green : .red)
                                 .font(.caption)
-                            if status == .notTrusted {
-                                Label("Not trusted", systemImage: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                    .font(.caption)
-                            }
                         }
                         Text(status == .trusted
-                             ? "mkcert root CA is installed and trusted."
-                             : status == .notTrusted
-                                 ? "mkcert root CA is in the keychain but not trusted."
-                                 : status == .notInKeychain
-                                     ? "mkcert root CA is not in the system keychain."
-                                     : "mkcert root CA is not installed.")
+                             ? "mkcert root CA is installed and available."
+                             : status == .notInKeychain
+                                 ? "mkcert root CA exists on disk but is not in your keychain."
+                                 : "mkcert root CA is not installed.")
                             .font(.caption)
                     }
 
                     if let status = mkcertCAStatus, !status.isUsable {
-                        Text(status == .notTrusted
-                             ? "Run the install command in Terminal to trigger the macOS trust approval dialog:"
-                             : "Run this command in Terminal to install the mkcert root CA. macOS will prompt you to approve the certificate trust:")
+                        Text("Run this command in Terminal (without sudo) to install the mkcert root CA:")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 

@@ -157,7 +157,12 @@ class SiteManager: ObservableObject {
 
     private func configureSite(_ site: Site) {
         let phpSocket = site.phpVersion.map { PHPService.shared.socketPath(for: $0) }
-        let cert = MkcertService.shared.generateCert(for: site.hostname)!
+        guard let cert = MkcertService.shared.generateCert(for: site.hostname) else {
+            DispatchQueue.main.async {
+                self.lastError = "Failed to generate certificate for \(site.hostname).test. Open Settings -> Commands and verify mkcert setup."
+            }
+            return
+        }
 
         switch site.serverType {
         case .apache:

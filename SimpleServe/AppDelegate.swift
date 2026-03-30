@@ -4,6 +4,7 @@ import Combine
 
 extension Notification.Name {
     static let simpleServeServerStatusDidChange = Notification.Name("simpleServeServerStatusDidChange")
+    static let simpleServeOpenSettingsCommands = Notification.Name("simpleServeOpenSettingsCommands")
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
@@ -13,6 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var eventMonitor: Any?
     var settingsWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
+    let settingsNavigation = SettingsNavigation()
 
     let siteManager = SiteManager.shared
     let appSettings = AppSettings()
@@ -51,6 +53,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             .sink { [weak self] _ in
                 self?.updateIcon()
                 NotificationCenter.default.post(name: .simpleServeServerStatusDidChange, object: nil)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .simpleServeOpenSettingsCommands)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.showSettingsWindow(selecting: .commands)
             }
             .store(in: &cancellables)
 
@@ -143,10 +152,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     @objc func openSettingsWindow() {
+        showSettingsWindow(selecting: .components)
+    }
+
+    func showSettingsWindow(selecting tab: SettingsTab) {
+        settingsNavigation.selectedTab = tab
         if settingsWindow == nil || settingsWindow?.isVisible == false {
             let settingsView = SettingsView()
                 .environmentObject(siteManager)
                 .environmentObject(appSettings)
+                .environmentObject(settingsNavigation)
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 520, height: 440),
                 styleMask: [.titled, .closable],

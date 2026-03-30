@@ -6,9 +6,7 @@ enum CAStatus: Equatable {
     case notFound
     /// rootCA.pem exists on disk but is not present in the system keychain.
     case notInKeychain
-    /// Certificate is in the system keychain but not marked as trusted.
-    case notTrusted
-    /// Certificate is in the system keychain and trusted.
+    /// Certificate is present in keychain (usable for local cert generation).
     case trusted
 
     var isUsable: Bool { self == .trusted }
@@ -18,6 +16,7 @@ class MkcertService {
     static let shared = MkcertService()
     private let brew = HomebrewService.shared
     private let certsDir: URL
+    private var lastGenerationError: String?
 
     private init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -27,13 +26,19 @@ class MkcertService {
 
     var mkcertPath: String { "\(brew.brewPrefix)/bin/mkcert" }
 
-    /// The full Terminal command the user should run to install the mkcert root CA.
-    /// Requires sudo so macOS presents the trust approval dialog.
-    var installCommand: String { "sudo \(mkcertPath) -install" }
+    /// The Terminal command the user should run to install the mkcert root CA.
+    /// Intentionally does not use sudo; running with sudo can create unreadable CA key files.
+    var installCommand: String { "\"\(mkcertPath)\" -install" }
+
+    private func caRootPath() -> String? {
+        let caRootResult = brew.run("\(mkcertPath) -CAROOT", timeout: 5)
+        let caRoot = caRootResult.output.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        return caRoot.isEmpty ? nil : caRoot
+    }
 
     // MARK: - CA Status Check
 
-    /// Checks the full status of the mkcert root CA: existence, keychain presence, and trust.
+    /// Checks CA availability: mkcert binary, rootCA.pem, and keychain presence.
     /// Runs subprocesses — call off the main thread.
     func checkCAStatus() -> CAStatus {
         // 1. Verify mkcert binary exists
@@ -41,32 +46,37 @@ class MkcertService {
 
         // 2. Discover CA root directory and verify rootCA.pem exists on disk
         let caRootResult = brew.run("\(mkcertPath) -CAROOT", timeout: 5)
-        let caRoot = caRootResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let caRoot = caRootResult.output.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         guard !caRoot.isEmpty else { return .notFound }
         let caPath = "\(caRoot)/rootCA.pem"
         guard FileManager.default.fileExists(atPath: caPath) else { return .notFound }
 
-        // 3. Check whether the mkcert CA certificate is present in the system keychain
-        let findResult = brew.run(
-            "/usr/bin/security find-certificate -c \"mkcert\" -a /Library/Keychains/System.keychain 2>&1",
+        // 3. Compute fingerprint for rootCA.pem
+        let fpResult = brew.run(
+            "/usr/bin/openssl x509 -in \"\(caPath)\" -noout -fingerprint -sha1 2>/dev/null",
             timeout: 5
         )
-        guard findResult.exitCode == 0, findResult.output.contains("mkcert") else {
+        guard fpResult.exitCode == 0 else { return .notInKeychain }
+        let fingerprint = fpResult.output
+            .replacingOccurrences(of: "SHA1 Fingerprint=", with: "")
+            .replacingOccurrences(of: ":", with: "")
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            .uppercased()
+        guard !fingerprint.isEmpty else { return .notInKeychain }
+
+        // 4. Check if fingerprint exists in system or login keychain
+        let keychainScan = brew.run(
+            "/usr/bin/security find-certificate -a -Z /Library/Keychains/System.keychain \"$HOME/Library/Keychains/login.keychain-db\" 2>/dev/null",
+            timeout: 5
+        )
+        let normalizedScan = keychainScan.output
+            .replacingOccurrences(of: " ", with: "")
+            .uppercased()
+        guard normalizedScan.contains(fingerprint) else {
             return .notInKeychain
         }
 
-        // 4. Check whether the certificate is trusted (admin trust-settings domain)
-        let trustResult = brew.run(
-            "/usr/bin/security dump-trust-settings -d 2>&1",
-            timeout: 5
-        )
-        // dump-trust-settings exits 0 and lists certs when trust entries exist.
-        // If mkcert appears in the output, the CA has explicit trust set.
-        if trustResult.exitCode == 0, trustResult.output.contains("mkcert") {
-            return .trusted
-        }
-
-        return .notTrusted
+        return .trusted
     }
 
     // MARK: - SSL Readiness
@@ -74,22 +84,27 @@ class MkcertService {
     /// Ensures the mkcert CA is installed/trusted and a certificate exists for the hostname.
     /// Call this before using SSL for a site. Returns nil on success, or an error message on failure.
     func ensureSSLReady(for hostname: String) -> String? {
-        let status = checkCAStatus()
-        if !status.isUsable {
+        guard generateCert(for: hostname) != nil else {
+            let status = checkCAStatus()
             switch status {
             case .notFound:
-                return "mkcert root CA is not installed. Open Settings \u{2192} Commands and follow the mkcert setup instructions."
+                return "mkcert is not installed or has no local CA yet. Install mkcert and run \"\(installCommand)\", then try adding the site again."
             case .notInKeychain:
-                return "mkcert root CA exists on disk but has not been added to the system keychain. Open Settings \u{2192} Commands and run the install command in Terminal."
-            case .notTrusted:
-                return "mkcert root CA is in the keychain but not trusted. Open Settings \u{2192} Commands and run \"\(installCommand)\" in Terminal to approve the trust dialog."
+                return "mkcert CA exists but is not in your macOS keychain. Run \"\(installCommand)\" once, then try adding the site again."
             case .trusted:
-                break // unreachable given the guard above
+                if let details = lastGenerationError, !details.isEmpty {
+                    if details.localizedCaseInsensitiveContains("failed to read the CA key") ||
+                        (details.localizedCaseInsensitiveContains("rootCA-key.pem") &&
+                         details.localizedCaseInsensitiveContains("permission denied")) {
+                        if let caRoot = caRootPath() {
+                            return "mkcert CA key is not readable by your user (usually caused by running install with sudo).\n\nRun in Terminal:\n1) sudo chown \"$USER\" \"\(caRoot)/rootCA-key.pem\" \"\(caRoot)/rootCA.pem\" && chmod 600 \"\(caRoot)/rootCA-key.pem\"\n2) \(installCommand)\n\nThen try adding the site again."
+                        }
+                        return "mkcert CA key is not readable by your user (usually caused by running install with sudo). Fix the files in ~/Library/Application Support/mkcert, run \(installCommand), then try adding the site again."
+                    }
+                    return "Failed to generate certificate for \(hostname).test. mkcert output: \(details)"
+                }
+                return "Failed to generate certificate for \(hostname).test. Open Settings -> Commands and verify mkcert setup, then try again."
             }
-        }
-
-        guard generateCert(for: hostname) != nil else {
-            return "Failed to generate certificate for \(hostname).test. Ensure mkcert is working by running \"\(installCommand)\" in Terminal, then try again."
         }
         return nil
     }
@@ -102,13 +117,25 @@ class MkcertService {
 
         if FileManager.default.fileExists(atPath: certFile),
            FileManager.default.fileExists(atPath: keyFile) {
+            lastGenerationError = nil
             return (certFile, keyFile)
         }
 
-        let result = brew.run(
-            "cd \"\(certsDir.path)\" && \(mkcertPath) -cert-file \"\(hostname).pem\" -key-file \"\(hostname)-key.pem\" \(hostname).test localhost 127.0.0.1 2>&1"
+        let result = brew.runWithStderr(
+            "cd \"\(certsDir.path)\" && \"\(mkcertPath)\" -cert-file \"\(hostname).pem\" -key-file \"\(hostname)-key.pem\" \(hostname).test localhost 127.0.0.1",
+            timeout: 20
         )
-        return result.exitCode == 0 ? (certFile, keyFile) : nil
+        if result.exitCode == 0 {
+            lastGenerationError = nil
+            return (certFile, keyFile)
+        }
+
+        let details = [result.stderr, result.output]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        lastGenerationError = details
+        return nil
     }
 
     func removeCert(for hostname: String) {
